@@ -15,6 +15,9 @@ import { camelCase } from 'change-case-all';
 
 const APOLLO_CLIENT_3_UNIFIED_PACKAGE = `@apollo/client`;
 const GROUPED_APOLLO_CLIENT_3_IDENTIFIER = 'Apollo';
+const DATA_TRANSFORMER_NAME = 'getErrorPopulatedData';
+const POPULATED_DATA_GENERIC_NAME = 'WithErrors';
+const DATA_TRANSFORMER_PACKAGE_NAME = '@prism/common';
 
 export interface ReactApolloPluginConfig extends ClientSideBasePluginConfig {
   withComponent: boolean;
@@ -94,6 +97,10 @@ export class ReactApolloVisitor extends ClientSideBaseVisitor<ReactApolloRawPlug
 
   private getReactImport(): string {
     return `import * as React from 'react';`;
+  }
+
+  private getDataTransformerImport(): string {
+    return `import { ${DATA_TRANSFORMER_NAME}, ${POPULATED_DATA_GENERIC_NAME} } from '${DATA_TRANSFORMER_PACKAGE_NAME}';`;
   }
 
   private getApolloReactCommonIdentifier(): string {
@@ -350,6 +357,7 @@ export class ReactApolloVisitor extends ClientSideBaseVisitor<ReactApolloRawPlug
 
     this.imports.add(this.getApolloReactCommonImport(true));
     this.imports.add(this.getApolloReactHooksImport(false));
+    this.imports.add(this.getDataTransformerImport());
     this.imports.add(this.getDefaultOptions());
 
     const hookFns = [
@@ -357,10 +365,15 @@ export class ReactApolloVisitor extends ClientSideBaseVisitor<ReactApolloRawPlug
         hasRequiredVariables && operationType !== 'Mutation' ? '' : '?'
       }: ${this.getApolloReactHooksIdentifier()}.${operationType}HookOptions<${operationResultType}, ${operationVariablesTypes}>) {
         const options = {...defaultOptions, ...baseOptions}
-        return ${this.getApolloReactHooksIdentifier()}.use${operationType}<${operationResultType}, ${operationVariablesTypes}>(${this.getDocumentNodeVariable(
+        const response = ${this.getApolloReactHooksIdentifier()}.use${operationType}<${operationResultType}, ${operationVariablesTypes}>(${this.getDocumentNodeVariable(
         node,
         documentVariableName
       )}, options);
+        const error = response.error;
+        if (response.data && error?.graphQLErrors.length) {
+          response.data = ${DATA_TRANSFORMER_NAME}(response.data, error.graphQLErrors);
+        }
+        return response as Omit<Apollo.${operationType}Result<${operationResultType}, ${operationVariablesTypes}>, 'data'> & { data: ${POPULATED_DATA_GENERIC_NAME}<${operationResultType}> };
       }`,
     ];
 
@@ -378,10 +391,15 @@ export class ReactApolloVisitor extends ClientSideBaseVisitor<ReactApolloRawPlug
       hookFns.push(
         `export function use${lazyOperationName}(baseOptions?: ${this.getApolloReactHooksIdentifier()}.LazyQueryHookOptions<${operationResultType}, ${operationVariablesTypes}>) {
           const options = {...defaultOptions, ...baseOptions}
-          return ${this.getApolloReactHooksIdentifier()}.useLazyQuery<${operationResultType}, ${operationVariablesTypes}>(${this.getDocumentNodeVariable(
+          const [queryFn, response] = ${this.getApolloReactHooksIdentifier()}.useLazyQuery<${operationResultType}, ${operationVariablesTypes}>(${this.getDocumentNodeVariable(
           node,
           documentVariableName
         )}, options);
+          const error = response.error;
+          if (response.data && error?.graphQLErrors.length) {
+            response.data = ${DATA_TRANSFORMER_NAME}(response.data, error.graphQLErrors);
+          }
+          return [queryFn, response as Omit<Apollo.LazyQueryResult<${operationResultType}, ${operationVariablesTypes}>, 'data'> & { data: ${POPULATED_DATA_GENERIC_NAME}<${operationResultType}> }] as ${this.getApolloReactHooksIdentifier()}.QueryTuple<${operationResultType}, ${operationVariablesTypes}>;
         }`
       );
       hookResults.push(`export type ${lazyOperationName}HookResult = ReturnType<typeof use${lazyOperationName}>;`);
